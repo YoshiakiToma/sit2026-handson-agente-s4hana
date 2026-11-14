@@ -6,6 +6,7 @@ Você vai estender um agente pro-code que analisa **ordens de venda bloqueadas**
 
 - lista as ordens bloqueadas (uma **tool de leitura** que você escreve);
 - envia lembrete de cobrança só depois do **"sim" do usuário** (human-in-the-loop);
+- consulta o **S/4HANA real** por um **servidor MCP**, descobrindo as tools em tempo de execução;
 - roda no **seu BTP** e fala o protocolo **A2A**, o mesmo que a Joule usa para chamar agentes.
 
 ```
@@ -13,17 +14,19 @@ Você (simulador A2A)  ──message/send──▶  sales-order-agent-srv  (Clou
                                           ├─ Agent Card (/.well-known/agent.json)
                                           ├─ LangGraph: agente ⇄ tools (loop)
                                           ├─ LLM: Generative AI Hub (ou modo fake)
-                                          └─ Dados: mock (ordens 4711 a 4714)
+                                          ├─ Dados: mock (ordens 4711 a 4714)
+                                          └─ MCP ──▶ S/4HANA real (destination SALES_ORDER_MCP)
 ```
 
 | # | Exercício | Tempo |
 |---|---|---|
-| 1 | Rodar o agente na sua máquina | 15 min |
+| 1 | Rodar o agente na sua máquina | 10 min |
 | 2 | Ligar o LLM e entender o loop | 15 min |
 | 3 | Criar uma tool de leitura | 20 min |
 | 4 | Criar uma tool com aprovação humana | 20 min |
-| 5 | Ensinar o agente: prompt e Agent Card | 10 min |
-| 6 | Deploy no BTP e chamada autenticada | 20 min |
+| 5 | Conectar ao S/4HANA real via MCP | 20 min |
+| 6 | Deploy no BTP, destination e chamada autenticada | 20 min |
+| Extra | Prompt e Agent Card | em casa |
 
 > **Travou?** A pasta `solucao/` deste repositório tem os arquivos prontos. `cp -R solucao/srv/. srv/` aplica tudo de uma vez.
 
@@ -43,10 +46,10 @@ Você (simulador A2A)  ──message/send──▶  sales-order-agent-srv  (Clou
 
 ---
 
-## Exercício 1: Rodar o agente na sua máquina (15 min)
+## Exercício 1: Rodar o agente na sua máquina (10 min)
 
 ```bash
-git clone <URL deste repositório> sales-order-agent-lab && cd sales-order-agent-lab
+git clone https://github.com/YoshiakiToma/sit2026-handson-agente-s4hana.git && cd sit2026-handson-agente-s4hana
 npm install
 cp .env.example .env          # começa com LLM_MODE=fake (sem AI Core)
 npm run dev
@@ -100,7 +103,7 @@ npx tsx scripts/simulate-joule.ts http://localhost:4004/ \
 
 No terminal do `npm run dev`, cada decisão do modelo aparece como `-> tool nome_da_tool({...})`. Veja quais tools ele chamou em cada pergunta e repare que a segunda pergunta usa a **memória** da conversa ("e a 4712" sem repetir o contexto).
 
-**2.3 Leia o loop.** Abra `srv/agent-executor.ts` e encontre o grafo (≈ linha 70):
+**2.3 Leia o loop.** Abra `srv/agent-executor.ts` e encontre o grafo, no método `buildGraph` (≈ linha 88):
 
 ```ts
 new StateGraph(MessagesAnnotation)
@@ -109,7 +112,7 @@ new StateGraph(MessagesAnnotation)
     .addEdge(START, "agent")
     .addConditionalEdges("agent", shouldContinue, ["tools", END])
     .addEdge("tools", "agent")             // resultado volta para o LLM
-    .compile({ checkpointer: new MemorySaver() }); // memória por contextId
+    .compile({ checkpointer: this.checkpointer }); // memória por contextId
 ```
 
 **Isso é o agente:** LLM + ferramentas + contexto, rodando em loop até o LLM decidir que terminou.
@@ -252,35 +255,78 @@ npx tsx scripts/simulate-joule.ts http://localhost:4004/ "Cobra o cliente 171000
 
 ---
 
-## Exercício 5: Ensinar o agente: prompt e Agent Card (10 min)
+## Exercício 5: Conectar ao S/4HANA real via MCP (20 min)
 
-**5.1 System prompt.** Em `srv/utils/prompts.ts`, função `getSystemPrompt`, acrescente depois da regra 8:
+Até aqui tudo veio de dados de demonstração. Agora o agente acessa o **S/4HANA de verdade** por um **servidor MCP** que o instrutor publicou no BTP. A diferença para os exercícios 3 e 4: **você não escreve a tool**. O servidor publica as tools e o agente as descobre em tempo de execução:
 
+| Tool do MCP | O que faz |
+|---|---|
+| `s4_describe` | descreve as entidades (`SalesOrders`, `Items`, ...) e seus campos |
+| `s4_query` | executa um `SELECT` em CQL (a linguagem de consulta do CAP) |
+| `s4_call` | **cria e altera** ordens no S/4 |
+
+> Este exercício precisa do **LLM real** (`AICORE_SERVICE_KEY`). No modo fake o roteiro não usa as tools do MCP.
+
+**5.1 Credenciais.** Você recebeu do instrutor o arquivo **`SALES_ORDER_MCP`**. É uma destination do BTP, que você importa no Exercício 6. Para usar agora, na sua máquina, converta para o `.env`:
+
+```bash
+npx tsx scripts/destination-to-env.ts ~/Downloads/SALES_ORDER_MCP >> .env
 ```
-9. Para saber QUAIS ordens estao bloqueadas (de um cliente ou no geral), use "listar_ordens_bloqueadas" e responda com uma tabela markdown (ordem, cliente, valor, bloqueio).
-10. Se houver faturas vencidas, ofereca enviar um lembrete de cobranca. So chame "enviar_lembrete_cobranca" quando o usuario pedir: a ferramenta pede o "sim".
+
+Veja o "antes": o agente ainda não alcança o S/4 e responde com os dados de demonstração.
+
+```bash
+npx tsx scripts/simulate-joule.ts http://localhost:4004/ "Quais as 5 ordens de venda mais recentes do S/4HANA?"
 ```
 
-Pergunte *"Por que a ordem 4711 está bloqueada?"*. Agora a recomendação deve **oferecer** o lembrete, sem enviar nada. (No modo fake o prompt não é lido: este passo só muda algo com o LLM real.)
+**5.2 Conectar.** Abra **`srv/tools/mcp-tools.ts`**.
 
-**5.2 Agent Card.** Em `srv/server.ts`, no `agentCard`, acrescente uma skill ao array `skills`:
+- A **Parte 1** (`getMcpConnection`) já está pronta: no BTP ela lê a destination pelo Cloud SDK; na sua máquina, o `.env`. Ela devolve a URL do servidor e o header `Authorization` com o token OAuth.
+- A **Parte 2** (`loadMcpTools`) é sua. Apague as linhas `void MCPAdapter;` e `return NONE;` e o bloco comentado abaixo delas, e coloque no lugar:
 
 ```ts
-{
-    id: "cobranca",
-    name: "Listar ordens bloqueadas e cobrar faturas vencidas",
-    description: "Lista as ordens bloqueadas e envia lembrete de cobranca ao cliente, com aprovacao.",
-    tags: ["cobranca", "human-in-the-loop"],
-    examples: ["Quais ordens do cliente 17100001 estao bloqueadas?", "Envia um lembrete de cobranca ao cliente 17100001"],
-    outputModes: ["text/plain"],
-},
+    // 5.1 Conecta no servidor MCP. O nome "s4" vira prefixo das tools.
+    const adapter = new MCPAdapter({ servers: { s4: connection } });
+
+    // 5.2 Descoberta: o servidor diz quais tools tem, com nome, descricao e schema.
+    const all = await adapter.listTools();
+
+    // 5.3 Menor privilegio: s4_call grava no S/4 SEM pedir o "sim" do usuario. Fica de fora.
+    const tools = all.filter((t) => t.name !== "s4_call");
+
+    await cache?.adapter?.close().catch(() => undefined);
+    cache = { tools, adapter, until: Date.now() + REFRESH_MS };
+    logger.info(`MCP conectado (${connection.url}): ${tools.map((t) => t.name).join(", ")}`);
+    return tools;
 ```
 
-Recarregue `/.well-known/agent.json`: a skill nova aparece. **Prompt** é para o seu LLM; **Agent Card** é para os outros agentes (e a Joule) saberem o que você faz.
+A função já está registrada em `srv/server.ts` (`extraTools: loadMcpTools`): o executor a chama a cada pedido e soma as tools do MCP às locais. Na próxima pergunta, o log mostra `MCP conectado (...): s4_describe, s4_query`.
+
+**5.3 Avisar o LLM.** Em `srv/utils/prompts.ts`, função `getSystemPrompt`, acrescente ao fim da lista "Como trabalhar":
+
+```
+- As ferramentas locais (consultar_ordem_venda, consultar_credito_cliente, listar_faturas_em_aberto, listar_ordens_bloqueadas) usam dados de DEMONSTRACAO: ordens 4711 a 4714. Para qualquer outra ordem, ou para listar ordens do S/4HANA, use as ferramentas s4_*: primeiro "s4_describe" para conhecer os campos e depois "s4_query" com um CQL SELECT de SalesOrderService (sempre com "limit 10" ou menos).
+```
+
+**5.4 Testar.**
+
+```bash
+npx tsx scripts/simulate-joule.ts http://localhost:4004/ \
+  "Quais as 5 ordens de venda mais recentes do S/4HANA?" \
+  "Mostra os itens da ordem 3858" \
+  "E por que a ordem 4711 esta bloqueada?"
+```
+
+Cada consulta ao S/4 leva **cerca de 10 s**: não está travado. No log, veja o LLM chamar `s4_describe` e depois **escrever o CQL sozinho** em `s4_query`.
+
+✅ **Checkpoint:** ordens reais do S/4 (números 38xx) e, na mesma conversa, a 4711 respondida pelas tools locais.
+
+💬 **Para discutir:** por que filtrar o `s4_call`? O servidor MCP publica uma escrita sem aprovação humana. **Quem decide o que o agente pode fazer é você, não o servidor.**
+Desafio extra: exponha o `s4_call` dentro de uma tool sua que chama `interrupt()` antes, como no Exercício 4.
 
 ---
 
-## Exercício 6: Deploy no BTP e chamada autenticada (20 min)
+## Exercício 6: Deploy no BTP, destination e chamada autenticada (20 min)
 
 **6.1 Login.** Copie o *API Endpoint* da página da subaccount trial (algo como `https://api.cf.us10-001.hana.ondemand.com`):
 
@@ -307,7 +353,13 @@ cf set-env sales-order-agent-srv LLM_MODE fake
 cf restage sales-order-agent-srv
 ```
 
-**6.4 Descoberta (pública).**
+**6.4 Destination do MCP.** No BTP, o agente não lê o `.env`: ele busca a destination pelo nome (`MCP_DESTINATION` no `mta.yaml`). Importe o arquivo que você recebeu:
+
+Cockpit › sua subaccount trial › **Connectivity › Destinations › Import Destination** › arquivo `SALES_ORDER_MCP` › confira se o **Client Secret** veio preenchido › **Save**.
+
+Não precisa de restage: o agente procura a destination de novo a cada minuto.
+
+**6.5 Descoberta (pública).**
 
 ```bash
 cf app sales-order-agent-srv          # copie a rota em "routes"
@@ -316,7 +368,7 @@ curl -s $AGENT/health
 curl -s $AGENT/.well-known/agent.json | head -c 400
 ```
 
-**6.5 Sem token = barrado.**
+**6.6 Sem token = barrado.**
 
 ```bash
 npx tsx scripts/simulate-joule.ts $AGENT/ "Qual o status da ordem 4711?"
@@ -324,7 +376,7 @@ npx tsx scripts/simulate-joule.ts $AGENT/ "Qual o status da ordem 4711?"
 
 Esperado: **`HTTP 401`**. O endpoint A2A exige um JWT do XSUAA com o escopo `Agent.Invoke`.
 
-**6.6 Com token.** Crie uma service key do XSUAA (é o mesmo tipo de credencial que a destination da Joule usa):
+**6.7 Com token.** Crie uma service key do XSUAA (é o mesmo tipo de credencial que a destination da Joule usa):
 
 ```bash
 cf create-service-key sales-order-agent-auth lab-key
@@ -337,12 +389,43 @@ export XSUAA_CLIENT_ID='<clientid>'
 export XSUAA_CLIENT_SECRET='<clientsecret>'
 npx tsx scripts/simulate-joule.ts $AGENT/ \
   "Quais ordens do cliente 17100001 estao bloqueadas?" \
-  "Envia um lembrete de cobranca para esse cliente" "sim"
+  "Envia um lembrete de cobranca para esse cliente" "sim" \
+  "Quais as 3 ordens mais recentes do S/4HANA?"
 ```
+
+A última pergunta passa pela **destination**: no log do app (`cf logs sales-order-agent-srv --recent`) aparece `MCP conectado`.
 
 > Use aspas simples no `clientid` e no `clientsecret`: eles têm `!` e `$`.
 
-✅ **Checkpoint final:** seu agente, no seu BTP, respondendo via A2A com autenticação e aprovação humana.
+✅ **Checkpoint final:** seu agente, no seu BTP, respondendo via A2A com autenticação, aprovação humana e dados reais do S/4 via destination.
+
+---
+
+## Extra: Ensinar o agente: prompt e Agent Card
+
+**A. System prompt.** Em `srv/utils/prompts.ts`, função `getSystemPrompt`, acrescente ao fim da lista "Como trabalhar":
+
+```
+9. Para saber QUAIS ordens estao bloqueadas (de um cliente ou no geral), use "listar_ordens_bloqueadas" e responda com uma tabela markdown (ordem, cliente, valor, bloqueio).
+10. Se houver faturas vencidas, ofereca enviar um lembrete de cobranca. So chame "enviar_lembrete_cobranca" quando o usuario pedir: a ferramenta pede o "sim".
+```
+
+Pergunte *"Por que a ordem 4711 está bloqueada?"*. Agora a recomendação deve **oferecer** o lembrete, sem enviar nada. (No modo fake o prompt não é lido: este passo só muda algo com o LLM real.)
+
+**B. Agent Card.** Em `srv/server.ts`, no `agentCard`, acrescente uma skill ao array `skills`:
+
+```ts
+{
+    id: "cobranca",
+    name: "Listar ordens bloqueadas e cobrar faturas vencidas",
+    description: "Lista as ordens bloqueadas e envia lembrete de cobranca ao cliente, com aprovacao.",
+    tags: ["cobranca", "human-in-the-loop"],
+    examples: ["Quais ordens do cliente 17100001 estao bloqueadas?", "Envia um lembrete de cobranca ao cliente 17100001"],
+    outputModes: ["text/plain"],
+},
+```
+
+Recarregue `/.well-known/agent.json`: a skill nova aparece. **Prompt** é para o seu LLM; **Agent Card** é para os outros agentes (e a Joule) saberem o que você faz.
 
 ---
 
@@ -350,7 +433,7 @@ npx tsx scripts/simulate-joule.ts $AGENT/ \
 
 Você não precisa de Joule para o lab. O instrutor mostra ao vivo o passo que falta:
 
-1. **Destination** no BTP apontando para a rota do agente, com `OAuth2ClientCredentials` (a mesma service key do 6.6).
+1. **Destination** no BTP apontando para a rota do agente, com `OAuth2ClientCredentials` (a mesma service key do 6.7). É o mesmo mecanismo que você usou para o MCP no 6.4, agora no sentido contrário.
 2. **Capability da Joule** (`*.sapdas.yaml` + `call_agent.yaml`) que manda a mensagem do usuário para o agente via A2A e mostra a resposta em cards.
 3. `joule deploy` e `joule launch`.
 
@@ -371,6 +454,9 @@ O agente que você construiu é o mesmo: a Joule só troca o simulador pela inte
 | Deploy falha por cota/memória | No cockpit, confira a cota de *Cloud Foundry Runtime*; ou reduza `memory` no `mta.yaml` para `512M` |
 | `HTTP 401` mesmo com as variáveis | `XSUAA_TOKEN_URL` precisa terminar em `/oauth/token`; confira as aspas simples |
 | A resposta chega muito tempo depois | Reduza a pergunta. A Joule cancela respostas que passam de 60 s; o simulador avisa |
+| Log sem `MCP conectado` (local) | Faltam as variáveis `MCP_*` no `.env` (Exercício 5.1) ou a Parte 2 ainda devolve `NONE` |
+| `tools extras indisponiveis` no log | Token ou URL do MCP errados. Gere o `.env` de novo a partir do arquivo; no BTP, confira a destination e o **Client Secret** |
+| No BTP o MCP não aparece | A destination precisa se chamar `SALES_ORDER_MCP` e estar na **mesma subaccount** do app |
 | Conversa "esqueceu" o contexto | O app reiniciou (memória em RAM) ou você abriu um simulador novo (novo `contextId`) |
 
 ---

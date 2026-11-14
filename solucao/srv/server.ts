@@ -16,6 +16,7 @@ import { fakeModelWithTools } from "./utils/fake-llm";
 import { fakeOrderModelWithTools } from "./utils/fake-llm-orders";
 import { buildView } from "./utils/joule-view";
 import { buildOrderView } from "./utils/joule-view-orders";
+import { loadMcpTools } from "./tools/mcp-tools";
 
 const logger = cds.log("a2a");
 const TERMINAL = new Set(["completed", "failed", "canceled", "rejected"]);
@@ -173,6 +174,7 @@ cds.on("bootstrap", (app: Express) => {
         fakeModel: fakeModelWithTools,
         workingText: "Analisando a ordem de venda...",
         buildView,
+        extraTools: loadMcpTools, // [Hands-on, Ex. 5] tools do servidor MCP do S/4HANA
     }));
 
     const authKind = (cds.env.requires as any)?.auth?.kind;

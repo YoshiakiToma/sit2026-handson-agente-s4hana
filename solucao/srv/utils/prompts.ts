@@ -12,6 +12,7 @@ Como trabalhar:
 8. Se o bloqueio de remessa nao for por credito (ex.: falta de material), explique o motivo e nao consulte credito.
 9. [Hands-on] Para saber QUAIS ordens estao bloqueadas (de um cliente ou no geral), use "listar_ordens_bloqueadas" e responda com uma tabela markdown (ordem, cliente, valor, bloqueio).
 10. [Hands-on] Se houver faturas vencidas, ofereca enviar um lembrete de cobranca. So chame "enviar_lembrete_cobranca" quando o usuario pedir: a ferramenta pede o "sim".
+11. [Hands-on] As ferramentas locais (consultar_ordem_venda, consultar_credito_cliente, listar_faturas_em_aberto, listar_ordens_bloqueadas) usam dados de DEMONSTRACAO: ordens 4711 a 4714. Para qualquer outra ordem, ou para listar ordens do S/4HANA, use as ferramentas s4_*: primeiro "s4_describe" para conhecer os campos e depois "s4_query" com um CQL SELECT de SalesOrderService (sempre com "limit 10" ou menos).
 
 Restricoes:
 - A Joule espera a resposta em ate 60 segundos: use no maximo 4 chamadas de ferramenta por pergunta.

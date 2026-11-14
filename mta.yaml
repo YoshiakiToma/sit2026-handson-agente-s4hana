@@ -20,6 +20,7 @@ modules:
     properties:
       DATA_MODE: mock       # dados ficticios (ordens 4711, 4712, 4713, 4714)
       MODEL_NAME: gpt-4.1   # modelo do Generative AI Hub
+      MCP_DESTINATION: SALES_ORDER_MCP   # Ex. 5: destination do servidor MCP do S/4HANA
       # O LLM e configurado DEPOIS do deploy (o segredo nao fica no mta.yaml):
       #   com service key:  cf set-env sales-order-agent-srv AICORE_SERVICE_KEY "$(cat aicore-key.json)"
       #   sem service key:  cf set-env sales-order-agent-srv LLM_MODE fake
@@ -37,6 +38,7 @@ modules:
           srv-url: ${default-uri}
     requires:
       - name: sales-order-agent-auth
+      - name: sales-order-agent-destination
 
 resources:
   # XSUAA: protege o endpoint A2A (JWT com o escopo Agent.Invoke).
@@ -49,3 +51,10 @@ resources:
       config:
         xsappname: sales-order-agent-${org}-${space}
         tenant-mode: dedicated
+
+  # Destination service: o agente le a destination SALES_ORDER_MCP (Ex. 5) da sua subaccount.
+  - name: sales-order-agent-destination
+    type: org.cloudfoundry.managed-service
+    parameters:
+      service: destination
+      service-plan: lite

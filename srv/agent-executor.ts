@@ -27,7 +27,14 @@ export interface AgentDefinition {
     workingText: string;
     /** Monta o card da resposta (parts[1].data) a partir dos resultados das tools do turno. */
     buildView?: (toolResults: Record<string, any>) => Record<string, unknown> | undefined;
+    /**
+     * [Hands-on, Ex. 5] Tools carregadas a cada pedido (ex.: de um servidor MCP). Somam-se a "tools".
+     * Se falhar, o agente segue so com as tools locais.
+     */
+    extraTools?: () => Promise<StructuredToolInterface[]>;
 }
+
+const NO_EXTRAS: StructuredToolInterface[] = [];
 
 /**
  * Ponte A2A -> LangGraph.
@@ -38,17 +45,28 @@ export interface AgentDefinition {
  *   A proxima mensagem com o mesmo taskId retoma o grafo com Command({ resume }).
  */
 export class LangGraphAgentExecutor implements AgentExecutor {
-    private readonly graph;
     private readonly logger;
     private readonly workingText: string;
     private readonly buildView?: AgentDefinition["buildView"];
+    private readonly def: AgentDefinition;
+    /** Memoria das conversas: fica fora do grafo para sobreviver quando o grafo e remontado (tools novas). */
+    private readonly checkpointer = new MemorySaver();
+    private graph?: ReturnType<LangGraphAgentExecutor["buildGraph"]>;
+    private graphExtras?: StructuredToolInterface[];
     /** Dono de cada conversa (contextId -> userName): impede que outro cliente retome a conversa alheia. */
     private readonly contextOwners = new Map<string, string>();
 
-    constructor({ name, tools, systemPrompt, fakeModel, workingText, buildView }: AgentDefinition) {
-        const logger = (this.logger = cds.log(`agent:${name}`));
-        this.workingText = workingText;
-        this.buildView = buildView;
+    constructor(def: AgentDefinition) {
+        this.def = def;
+        this.logger = cds.log(`agent:${def.name}`);
+        this.workingText = def.workingText;
+        this.buildView = def.buildView;
+        this.logger.info(`LLM: ${process.env.LLM_MODE === "fake" ? "FAKE (ensaio)" : process.env.MODEL_NAME || "gpt-4.1"}`);
+    }
+
+    /** O loop do agente: LLM (agent) <-> ferramentas (tools), ate o LLM responder sem pedir tool. */
+    private buildGraph(tools: StructuredToolInterface[]) {
+        const { systemPrompt, fakeModel } = this.def;
         // LLM_MODE=fake -> modelo roteirizado (ensaio sem AI Core). Padrao: Generative AI Hub.
         const modelWithTools =
             process.env.LLM_MODE === "fake"
@@ -56,7 +74,6 @@ export class LangGraphAgentExecutor implements AgentExecutor {
                 : new OrchestrationClient({
                       promptTemplating: { model: { name: process.env.MODEL_NAME || "gpt-4.1" } },
                   }).bindTools(tools);
-        logger.info(`LLM: ${process.env.LLM_MODE === "fake" ? "FAKE (ensaio)" : process.env.MODEL_NAME || "gpt-4.1"}`);
 
         const agentNode = async (state: typeof MessagesAnnotation.State) => {
             const response = await modelWithTools.invoke([new SystemMessage(systemPrompt()), ...state.messages]);
@@ -68,13 +85,31 @@ export class LangGraphAgentExecutor implements AgentExecutor {
             return last?.tool_calls?.length ? "tools" : END;
         };
 
-        this.graph = new StateGraph(MessagesAnnotation)
+        return new StateGraph(MessagesAnnotation)
             .addNode("agent", agentNode)
             .addNode("tools", new ToolNode(tools))
             .addEdge(START, "agent")
             .addConditionalEdges("agent", shouldContinue, ["tools", END])
             .addEdge("tools", "agent")
-            .compile({ checkpointer: new MemorySaver() });
+            .compile({ checkpointer: this.checkpointer });
+    }
+
+    /** Remonta o grafo so quando a lista de tools extras muda (ex.: cache do MCP renovado). */
+    private async getGraph() {
+        let extras = NO_EXTRAS;
+        if (this.def.extraTools) {
+            try {
+                extras = await this.def.extraTools();
+            } catch (e) {
+                this.logger.warn(`tools extras indisponiveis, seguindo so com as locais: ${e instanceof Error ? e.message : e}`);
+            }
+        }
+        if (!this.graph || extras !== this.graphExtras) {
+            this.graph = this.buildGraph([...this.def.tools, ...extras]);
+            this.graphExtras = extras;
+            if (extras.length) this.logger.info(`tools extras: ${extras.map((t) => t.name).join(", ")}`);
+        }
+        return this.graph;
     }
 
     async execute(ctx: RequestContext, bus: ExecutionEventBus): Promise<void> {
@@ -106,13 +141,14 @@ export class LangGraphAgentExecutor implements AgentExecutor {
 
         bus.publish(createStatusUpdate("working", this.workingText, ids));
 
+        const graph = await this.getGraph();
         const config = { configurable: { thread_id: contextId, user } };
         // Retoma se a task esta input-required OU se o grafo desta conversa tem um interrupt() pendente
         // (a Joule pode mandar o "sim" sem o taskId da task que pediu a confirmacao).
         let resuming = existingTask?.status.state === "input-required";
         if (!resuming) {
             try {
-                const snapshot = await this.graph.getState(config);
+                const snapshot = await graph.getState(config);
                 resuming = (snapshot.tasks ?? []).some((t: any) => t.interrupts?.length);
             } catch {
                 /* sem checkpoint para este contextId */
@@ -122,7 +158,7 @@ export class LangGraphAgentExecutor implements AgentExecutor {
 
         try {
             const input: any = resuming ? new Command({ resume: text }) : { messages: [new HumanMessage(text)] };
-            const stream = await this.graph.stream(input, config);
+            const stream = await graph.stream(input, config);
 
             let finalText = "";
             const toolResults: Record<string, any> = {};
