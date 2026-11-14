@@ -89,9 +89,16 @@ npx tsx scripts/simulate-joule.ts http://localhost:4004/ "Qual o status da ordem
 
 No modo `fake`, um roteiro fixo finge ser o LLM. Agora entra o modelo de verdade.
 
-**2.1** Edite o `.env`: cole em `AICORE_SERVICE_KEY` a service key que o instrutor distribuiu (**JSON em uma linha**) e comente `LLM_MODE=fake`. O `npm run dev` reinicia sozinho; o log mostra `LLM: gpt-4.1`.
+**2.1** O instrutor mandou no WhatsApp o arquivo **`aicore-key.json`** (a service key do Generative AI Hub). Salve na pasta Downloads e rode, na pasta do projeto:
 
-> Sem service key? Continue com `LLM_MODE=fake`: todos os exercícios funcionam, só que com respostas roteirizadas.
+```bash
+npx tsx scripts/aicore-to-env.ts ~/Downloads/aicore-key.json
+```
+
+O script grava a chave no `.env` em uma linha e desliga o `LLM_MODE=fake`. Você não precisa abrir nem copiar o JSON. O `npm run dev` reinicia sozinho e o log mostra `LLM: gpt-4.1`.
+
+> **Não cole o JSON à mão** a partir do chat: a linha quebra e as aspas se perdem.
+> Sem a chave? Continue com `LLM_MODE=fake`: os exercícios 1 a 4 funcionam com respostas roteirizadas (o 5 precisa do LLM real).
 
 **2.2** Pergunte de formas que o roteiro fake não entenderia:
 
@@ -345,13 +352,15 @@ cf deploy mta_archives/sales-order-agent_1.0.0.mtar
 **6.3 LLM no Cloud Foundry.** O segredo **não** vai no `mta.yaml`: vai como variável do app.
 
 ```bash
-# com service key do AI Core (o mesmo JSON do .env)
-cf set-env sales-order-agent-srv AICORE_SERVICE_KEY '<JSON em uma linha>'
+# com a service key do AI Core (o mesmo arquivo do Exercicio 2)
+cf set-env sales-order-agent-srv AICORE_SERVICE_KEY "$(cat ~/Downloads/aicore-key.json)"
 # OU sem AI Core
 cf set-env sales-order-agent-srv LLM_MODE fake
 
 cf restage sales-order-agent-srv
 ```
+
+> No Windows, rode este comando no **Git Bash** ou no **Business Application Studio**. O PowerShell remove as aspas do JSON.
 
 **6.4 Destination do MCP.** No BTP, o agente não lê o `.env`: ele busca a destination pelo nome (`MCP_DESTINATION` no `mta.yaml`). Importe o arquivo que você recebeu:
 
@@ -445,7 +454,7 @@ O agente que você construiu é o mesmo: a Joule só troca o simulador pela inte
 
 | Sintoma | Causa e solução |
 |---|---|
-| Log repete `Could not find service binding of type 'aicore'` e a resposta não chega | Sem service key. Confira `AICORE_SERVICE_KEY` em **uma linha**, ou use `LLM_MODE=fake` |
+| Log repete `Could not find service binding of type 'aicore'` e a resposta não chega | Sem service key. Rode de novo `npx tsx scripts/aicore-to-env.ts ~/Downloads/aicore-key.json` (local) ou o `cf set-env` do 6.3 + `cf restage` (BTP). Ou use `LLM_MODE=fake` |
 | `Tool "..." not found` | A tool não está no array `labTools` |
 | O LLM ignora sua tool | Descrição vaga, ou a tool não está registrada. Releia o Exercício 3.3 |
 | `EADDRINUSE :4004` | Outro `npm run dev` aberto. Feche ou use `PORT=4005 npm run dev` |
