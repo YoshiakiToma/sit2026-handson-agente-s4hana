@@ -21,10 +21,11 @@ modules:
       DATA_MODE: mock       # dados ficticios (ordens 4711, 4712, 4713, 4714)
       MODEL_NAME: gpt-4.1   # modelo do Generative AI Hub
       MCP_DESTINATION: SALES_ORDER_MCP   # Ex. 5: destination do servidor MCP do S/4HANA
-      # O LLM e configurado DEPOIS do deploy (o segredo nao fica no mta.yaml):
-      #   com service key:  cf set-env sales-order-agent-srv AICORE_SERVICE_KEY "$(cat aicore-key.json)"
-      #   sem service key:  cf set-env sales-order-agent-srv LLM_MODE fake
-      #   e depois:         cf restage sales-order-agent-srv
+      # O LLM (AI Token Gateway) e configurado DEPOIS do deploy (o segredo nao fica no mta.yaml):
+      #   cf set-env sales-order-agent-srv AITG_URL <url do gateway>
+      #   cf set-env sales-order-agent-srv AITG_API_KEY <api key aitg_...>
+      #   cf restage sales-order-agent-srv
+      # Sem essas variaveis o agente roda no modo fake.
     build-parameters:
       builder: custom
       commands:

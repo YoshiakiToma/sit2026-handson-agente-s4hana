@@ -4,7 +4,6 @@ import cds from "@sap/cds";
 import type { TextPart } from "@a2a-js/sdk";
 import type { AgentExecutor, ExecutionEventBus, RequestContext } from "@a2a-js/sdk/server";
 
-import { OrchestrationClient } from "@sap-ai-sdk/langchain";
 import { Command, END, MemorySaver, MessagesAnnotation, START, StateGraph } from "@langchain/langgraph";
 import { ToolNode } from "@langchain/langgraph/prebuilt";
 import { HumanMessage, SystemMessage } from "@langchain/core/messages";
@@ -14,6 +13,7 @@ import { contentToText } from "./utils/helpers";
 import { createNewTask, createStatusUpdate } from "./utils/a2a-operations";
 import { collectToolResults } from "./utils/joule-view";
 import type { AgentUser } from "./auth";
+import { createModelWithTools, describeLlm, llmMode } from "./utils/llm";
 
 /** Configuracao de um agente: o mesmo executor serve os dois agentes do app. */
 export interface AgentDefinition {
@@ -61,19 +61,14 @@ export class LangGraphAgentExecutor implements AgentExecutor {
         this.logger = cds.log(`agent:${def.name}`);
         this.workingText = def.workingText;
         this.buildView = def.buildView;
-        this.logger.info(`LLM: ${process.env.LLM_MODE === "fake" ? "FAKE (ensaio)" : process.env.MODEL_NAME || "gpt-4.1"}`);
+        this.logger.info(`LLM: ${describeLlm()}`);
     }
 
     /** O loop do agente: LLM (agent) <-> ferramentas (tools), ate o LLM responder sem pedir tool. */
     private buildGraph(tools: StructuredToolInterface[]) {
         const { systemPrompt, fakeModel } = this.def;
-        // LLM_MODE=fake -> modelo roteirizado (ensaio sem AI Core). Padrao: Generative AI Hub.
-        const modelWithTools =
-            process.env.LLM_MODE === "fake"
-                ? fakeModel
-                : new OrchestrationClient({
-                      promptTemplating: { model: { name: process.env.MODEL_NAME || "gpt-4.1" } },
-                  }).bindTools(tools);
+        // LLM: AI Token Gateway, Generative AI Hub ou modelo roteirizado (ver srv/utils/llm.ts).
+        const modelWithTools = llmMode() === "fake" ? fakeModel : createModelWithTools(tools);
 
         const agentNode = async (state: typeof MessagesAnnotation.State) => {
             const response = await modelWithTools.invoke([new SystemMessage(systemPrompt()), ...state.messages]);

@@ -1,6 +1,6 @@
 # Hands-on: construa um agente de IA para o S/4HANA
 
-**SAP Inside Track 2026 · 2 horas · CAP + LangGraph + Generative AI Hub + A2A**
+**SAP Inside Track 2026 · 2 horas · CAP + LangGraph + AI Token Gateway + MCP + A2A**
 
 Você vai estender um agente pro-code que analisa **ordens de venda bloqueadas**. Ao final dele, o agente:
 
@@ -13,7 +13,7 @@ Você vai estender um agente pro-code que analisa **ordens de venda bloqueadas**
 Você (simulador A2A)  ──message/send──▶  sales-order-agent-srv  (Cloud Foundry)
                                           ├─ Agent Card (/.well-known/agent.json)
                                           ├─ LangGraph: agente ⇄ tools (loop)
-                                          ├─ LLM: Generative AI Hub (ou modo fake)
+                                          ├─ LLM: AI Token Gateway → SAP AI Core (ou modo fake)
                                           ├─ Dados: mock (ordens 4711 a 4714)
                                           └─ MCP ──▶ S/4HANA real (destination SALES_ORDER_MCP)
 ```
@@ -51,7 +51,7 @@ Você (simulador A2A)  ──message/send──▶  sales-order-agent-srv  (Clou
 ```bash
 git clone https://github.com/YoshiakiToma/sit2026-handson-agente-s4hana.git && cd sit2026-handson-agente-s4hana
 npm install
-cp .env.example .env          # começa com LLM_MODE=fake (sem AI Core)
+cp .env.example .env          # sem chave do LLM: o agente começa no modo fake
 npm run dev
 ```
 
@@ -89,16 +89,21 @@ npx tsx scripts/simulate-joule.ts http://localhost:4004/ "Qual o status da ordem
 
 No modo `fake`, um roteiro fixo finge ser o LLM. Agora entra o modelo de verdade.
 
-**2.1** O instrutor mandou no WhatsApp o arquivo **`aicore-key.json`** (a service key do Generative AI Hub). Salve na pasta Downloads e rode, na pasta do projeto:
+**2.1** O instrutor mandou no WhatsApp duas linhas do **AI Token Gateway**, o serviço que fica na frente do SAP AI Core, controla quem usa o LLM e mede o consumo de cada um:
 
-```bash
-npx tsx scripts/aicore-to-env.ts ~/Downloads/aicore-key.json
+```
+AITG_URL=https://...
+AITG_API_KEY=aitg_...
 ```
 
-O script grava a chave no `.env` em uma linha e desliga o `LLM_MODE=fake`. Você não precisa abrir nem copiar o JSON. O `npm run dev` reinicia sozinho e o log mostra `LLM: gpt-4.1`.
+Cole as duas linhas no fim do seu `.env`. O `npm run dev` reinicia sozinho e o log troca de `FAKE` para:
 
-> **Não cole o JSON à mão** a partir do chat: a linha quebra e as aspas se perdem.
-> Sem a chave? Continue com `LLM_MODE=fake`: os exercícios 1 a 4 funcionam com respostas roteirizadas (o 5 precisa do LLM real).
+```
+LLM: gpt-4.1 via AI Token Gateway
+```
+
+> A API Key (`aitg_...`) é uma credencial: não publique no GitHub. O `.env` já está no `.gitignore`.
+> Sem as linhas? O agente continua no modo fake: os exercícios 1 a 4 funcionam com respostas roteirizadas (o 5 precisa do LLM real).
 
 **2.2** Pergunte de formas que o roteiro fake não entenderia:
 
@@ -272,7 +277,7 @@ Até aqui tudo veio de dados de demonstração. Agora o agente acessa o **S/4HAN
 | `s4_query` | executa um `SELECT` em CQL (a linguagem de consulta do CAP) |
 | `s4_call` | **cria e altera** ordens no S/4 |
 
-> Este exercício precisa do **LLM real** (`AICORE_SERVICE_KEY`). No modo fake o roteiro não usa as tools do MCP.
+> Este exercício precisa do **LLM real** (as linhas `AITG_*` do Exercício 2). No modo fake o roteiro não usa as tools do MCP.
 
 **5.1 Credenciais.** Você recebeu do instrutor o arquivo **`SALES_ORDER_MCP`**. É uma destination do BTP, que você importa no Exercício 6. Para usar agora, na sua máquina, converta para o `.env`:
 
@@ -349,18 +354,15 @@ mbt build
 cf deploy mta_archives/sales-order-agent_1.0.0.mtar
 ```
 
-**6.3 LLM no Cloud Foundry.** O segredo **não** vai no `mta.yaml`: vai como variável do app.
+**6.3 LLM no Cloud Foundry.** O segredo **não** vai no `mta.yaml`: vai como variável do app. Use os mesmos valores do seu `.env`:
 
 ```bash
-# com a service key do AI Core (o mesmo arquivo do Exercicio 2)
-cf set-env sales-order-agent-srv AICORE_SERVICE_KEY "$(cat ~/Downloads/aicore-key.json)"
-# OU sem AI Core
-cf set-env sales-order-agent-srv LLM_MODE fake
-
+cf set-env sales-order-agent-srv AITG_URL <AITG_URL do .env>
+cf set-env sales-order-agent-srv AITG_API_KEY <AITG_API_KEY do .env>
 cf restage sales-order-agent-srv
 ```
 
-> No Windows, rode este comando no **Git Bash** ou no **Business Application Studio**. O PowerShell remove as aspas do JSON.
+Sem essas variáveis, o app sobe no modo fake. Confira em `curl -s $AGENT/health` (campo `llm`), depois do 6.5.
 
 **6.4 Destination do MCP.** No BTP, o agente não lê o `.env`: ele busca a destination pelo nome (`MCP_DESTINATION` no `mta.yaml`). Importe o arquivo que você recebeu:
 
@@ -454,7 +456,10 @@ O agente que você construiu é o mesmo: a Joule só troca o simulador pela inte
 
 | Sintoma | Causa e solução |
 |---|---|
-| Log repete `Could not find service binding of type 'aicore'` e a resposta não chega | Sem service key. Rode de novo `npx tsx scripts/aicore-to-env.ts ~/Downloads/aicore-key.json` (local) ou o `cf set-env` do 6.3 + `cf restage` (BTP). Ou use `LLM_MODE=fake` |
+| `/health` ou o log dizem `FAKE (nenhum LLM configurado...)` | Faltam `AITG_URL` e `AITG_API_KEY` no `.env` (local) ou no `cf set-env` + `cf restage` (BTP) |
+| `401 Invalid API key` | A API Key está errada, expirou ou foi revogada. Copie de novo a linha do WhatsApp, sem espaços |
+| `429` (limite ou orçamento) | O gateway aplica limites de requisições e de orçamento por chave. Espere um minuto e avise o instrutor |
+| `403` com o modelo | O modelo de `MODEL_NAME` não é permitido para a chave. Use o modelo que o instrutor indicar |
 | `Tool "..." not found` | A tool não está no array `labTools` |
 | O LLM ignora sua tool | Descrição vaga, ou a tool não está registrada. Releia o Exercício 3.3 |
 | `EADDRINUSE :4004` | Outro `npm run dev` aberto. Feche ou use `PORT=4005 npm run dev` |

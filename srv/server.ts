@@ -17,6 +17,7 @@ import { fakeOrderModelWithTools } from "./utils/fake-llm-orders";
 import { buildView } from "./utils/joule-view";
 import { buildOrderView } from "./utils/joule-view-orders";
 import { loadMcpTools } from "./tools/mcp-tools";
+import { describeLlm } from "./utils/llm";
 
 const logger = cds.log("a2a");
 const TERMINAL = new Set(["completed", "failed", "canceled", "rejected"]);
@@ -134,7 +135,7 @@ cds.on("bootstrap", (app: Express) => {
             status: "ok",
             dataMode: getProvider().mode,
             orderManagementDataMode: getOrderProvider().mode,
-            model: process.env.MODEL_NAME || "gpt-4.1",
+            llm: describeLlm(),
             agents: [agentCard.url, orderMgmtCard.url],
         })
     );
