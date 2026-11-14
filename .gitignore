@@ -1,0 +1,9 @@
+node_modules/
+gen/
+mta_archives/
+*.mtar
+.env
+.cdsrc.json
+@cds-models/
+joule-capability/*.daar
+joule-capability-orders/*.daar

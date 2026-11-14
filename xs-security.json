@@ -1,0 +1,69 @@
+{
+  "xsappname": "sales-order-agent",
+  "tenant-mode": "dedicated",
+  "description": "PoC SIT 2026 - Agente A2A de ordens de venda",
+  "scopes": [
+    {
+      "name": "$XSAPPNAME.Agent.Invoke",
+      "description": "Chamar o agente via A2A"
+    },
+    {
+      "name": "$XSAPPNAME.CreditRelease",
+      "description": "Liberar bloqueio de credito de ordens de venda"
+    },
+    {
+      "name": "$XSAPPNAME.SalesOrder.Change",
+      "description": "Criar e alterar ordens de venda (agente de gestao)"
+    }
+  ],
+  "authorities": [
+    "$XSAPPNAME.Agent.Invoke",
+    "$XSAPPNAME.CreditRelease",
+    "$XSAPPNAME.SalesOrder.Change"
+  ],
+  "role-templates": [
+    {
+      "name": "AgentUser",
+      "description": "Consultar ordens de venda pelo agente",
+      "scope-references": [
+        "$XSAPPNAME.Agent.Invoke"
+      ]
+    },
+    {
+      "name": "CreditApprover",
+      "description": "Consultar e liberar bloqueio de credito pelo agente",
+      "scope-references": [
+        "$XSAPPNAME.Agent.Invoke",
+        "$XSAPPNAME.CreditRelease"
+      ]
+    },
+    {
+      "name": "OrderEditor",
+      "description": "Consultar, criar e alterar ordens de venda pelo agente de gestao",
+      "scope-references": [
+        "$XSAPPNAME.Agent.Invoke",
+        "$XSAPPNAME.SalesOrder.Change"
+      ]
+    }
+  ],
+  "role-collections": [
+    {
+      "name": "SalesOrderAgent_User",
+      "role-template-references": [
+        "$XSAPPNAME.AgentUser"
+      ]
+    },
+    {
+      "name": "SalesOrderAgent_CreditApprover",
+      "role-template-references": [
+        "$XSAPPNAME.CreditApprover"
+      ]
+    },
+    {
+      "name": "SalesOrderAgent_OrderEditor",
+      "role-template-references": [
+        "$XSAPPNAME.OrderEditor"
+      ]
+    }
+  ]
+}
