@@ -19,7 +19,7 @@ modules:
       buildpack: nodejs_buildpack
     properties:
       DATA_MODE: mock       # dados ficticios (ordens 4711, 4712, 4713, 4714)
-      MODEL_NAME: gpt-4.1   # modelo do Generative AI Hub
+      # MODEL_NAME: padrao anthropic--claude-4.5-sonnet no gateway; defina so se o instrutor indicar outro
       MCP_DESTINATION: SALES_ORDER_MCP   # Ex. 5: destination do servidor MCP do S/4HANA
       # O LLM (AI Token Gateway) e configurado DEPOIS do deploy (o segredo nao fica no mta.yaml):
       #   cf set-env sales-order-agent-srv AITG_URL <url do gateway>

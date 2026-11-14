@@ -10,12 +10,21 @@ import cds from "@sap/cds";
 import { ChatOpenAI } from "@langchain/openai";
 import { OrchestrationClient } from "@sap-ai-sdk/langchain";
 import type { StructuredToolInterface } from "@langchain/core/tools";
+import { ToolMessage, type BaseMessage } from "@langchain/core/messages";
+import { RunnableLambda } from "@langchain/core/runnables";
 
 const logger = cds.log("llm");
 
 export type LlmMode = "gateway" | "aicore" | "fake";
 
-export const modelName = (): string => process.env.MODEL_NAME || "gpt-4.1";
+/** Modelo padrao por modo: o que a chave do gateway do evento libera, ou o deployment do AI Core. */
+const DEFAULT_MODEL: Record<LlmMode, string> = {
+    gateway: "anthropic--claude-4.5-sonnet",
+    aicore: "gpt-4.1",
+    fake: "gpt-4.1",
+};
+
+export const modelName = (): string => process.env.MODEL_NAME || DEFAULT_MODEL[llmMode()];
 
 export function llmMode(): LlmMode {
     if (process.env.LLM_MODE === "fake") return "fake";
@@ -45,18 +54,32 @@ function gatewayBaseUrl(): string {
     return url.endsWith("/v1") ? url : `${url}/v1`;
 }
 
+/**
+ * O gateway repassa o campo "name" das mensagens "tool" ao Orchestration Service do AI Core, que nao aceita
+ * esse campo nesse papel (erro 502 "'tool' is not one of ['system']"). O vinculo com a chamada vai pelo
+ * tool_call_id, entao o "name" pode sair sem perda.
+ */
+function withoutToolNames(messages: BaseMessage[]): BaseMessage[] {
+    return messages.map((m) =>
+        ToolMessage.isInstance(m) && m.name
+            ? new ToolMessage({ content: m.content, tool_call_id: m.tool_call_id, status: m.status, artifact: m.artifact })
+            : m
+    );
+}
+
 /** Modelo de chat com as tools ligadas (para LLM_MODE=fake, o executor usa o modelo roteirizado). */
 export function createModelWithTools(tools: StructuredToolInterface[]) {
     if (llmMode() === "gateway") {
         // Projeto do gateway: implicito quando a chave pertence a um so projeto; senao, AITG_PROJECT.
         const defaultHeaders: Record<string, string> = {};
         if (process.env.AITG_PROJECT) defaultHeaders["X-AITG-Project"] = process.env.AITG_PROJECT;
-        return new ChatOpenAI({
+        const model = new ChatOpenAI({
             model: modelName(),
             apiKey: process.env.AITG_API_KEY,
             configuration: { baseURL: gatewayBaseUrl(), defaultHeaders },
             maxRetries: 1, // 429 (RPM/TPM ou orcamento) deve aparecer para o aluno, nao virar espera longa
         }).bindTools(tools);
+        return RunnableLambda.from(withoutToolNames).pipe(model);
     }
     return new OrchestrationClient({ promptTemplating: { model: { name: modelName() } } }).bindTools(tools);
 }

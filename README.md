@@ -99,8 +99,10 @@ AITG_API_KEY=aitg_...
 Cole as duas linhas no fim do seu `.env`. O `npm run dev` reinicia sozinho e o log troca de `FAKE` para:
 
 ```
-LLM: gpt-4.1 via AI Token Gateway
+LLM: anthropic--claude-4.5-sonnet via AI Token Gateway
 ```
+
+Cada pergunta passa pelo gateway e consome o orçamento da turma: pergunte com objetivo, sem repetir à toa.
 
 > A API Key (`aitg_...`) é uma credencial: não publique no GitHub. O `.env` já está no `.gitignore`.
 > Sem as linhas? O agente continua no modo fake: os exercícios 1 a 4 funcionam com respostas roteirizadas (o 5 precisa do LLM real).
